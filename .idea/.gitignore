@@ -7,6 +7,4 @@
 /dataSources/
 /dataSources.local.xml
 
-runtime/deploy_files/
-runtime/deploy_files/zips/
-!runtime/deploy_files/config.yaml
+runtime
