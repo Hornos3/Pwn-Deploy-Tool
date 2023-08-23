@@ -1,0 +1,35 @@
+FROM {image}
+
+RUN sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list && \
+apt update && \
+apt-get install -y {apt} && \
+rm -rf /var/lib/apt/lists/ && \
+rm -rf /root/.cache && \
+apt-get autoclean && \
+rm -rf /tmp/* /var/lib/apt/* /var/cache/* /var/log/*
+
+COPY {name}/pwn.xinetd /etc/xinetd.d/pwn
+COPY {name}/service.sh /
+
+# useradd and put flag
+RUN useradd -m ctf \
+    && echo $FLAG > {basedir_in_docker}/flag \
+    && echo $FLAG > /flag
+ENV FLAG=""
+
+# copy bin
+COPY zips/{copyfile} /home/ctf
+
+# chown & chmod
+RUN unzip {basedir_in_docker}/{copyfile} -d {basedir_in_docker} \
+    && chmod -R 750 {basedir_in_docker} \
+    && chmod 740 /flag \
+    && chmod 740 {basedir_in_docker}/flag \
+    && chmod 770 {basedir_in_docker}/{entry} \
+    && chown -R ctf:ctf {basedir_in_docker} \
+    && chmod 700 /service.sh
+
+EXPOSE {port}
+
+# start service
+CMD ["/service.sh"]

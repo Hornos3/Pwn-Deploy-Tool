@@ -1,0 +1,3 @@
+#!/bin/bash
+cd runtime/deploy_files || exit
+docker build -t {name} -f {dockerfile} .

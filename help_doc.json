@@ -1,0 +1,85 @@
+{
+  "all":
+    [
+      "usage: <command> [...] <options> [...]",
+      "You can use '<command> help' to check out detailed help of specified command.",
+      "command list: ",
+      "    new                Create docker object(s) not configured.",
+      "    select             Select one or several object that is ready to be configured",
+      "    set                Set some config for selected object(s).",
+      "            image      Set the image that your container(s) need to base on.",
+      "            apt        Add or remove software packages installed in your container",
+      "            basedir    Set the base directory of selected object(s)",
+      "            deploy     Add or remove files you want to deploy.",
+      "            entry      Set the entry file that xinetd really executes at first.",
+      "            port       Set the port of the deployment",
+      "    list               List some configs of selected objects.",
+      "            container  List the containers managed by pdt.",
+      "            apt        List the apt packages should be installed of selected",
+      "            deploy     List the file deployed in selected objects.",
+      "    run                Start building selected objects.",
+      "    status             Print out the status of a container, -a for all."
+    ],
+  "new":
+    [
+      "    new                Create docker object(s) not configured.",
+      "    options:",
+      "        -s             Select the new object after created.",
+      "    example:           new pwn1 pwn2 -s  -->  create 2 containers, named pwn1 and pwn2, and selected",
+      "                       new pwn*10  -->  create 10 containers, named pwn_0, pwn_1, ..., pwn_9",
+      "    notice:            container name can only consists letters, digits and underlines"
+    ],
+  "select":
+    [
+      "    select             Select one or several object that is ready to be configured.",
+      "        --add          Select a container",
+      "        --rm           Unselect a container",
+      "        --addall       Select all containers",
+      "        --rmall        Unselect all containers"
+    ],
+  "set":
+    [
+      "    set                Set some config for selected object(s).",
+      "        image          Set the image that your container(s) need to base on. You",
+      "                       should use 'docker pull' to download it in advance.",
+      "        apt            Add or remove software packages installed in your container",
+      "                       (only for systems that supports apt).",
+      "            --add      Add a package",
+      "            --rm       Remove a package",
+      "        deploy         Add or remove files you want to deploy.",
+      "            --add",
+      "            --rm",
+      "        files          Set the files that a deployment needs, in some cases (like",
+      "                       kernel pwn), you may need many files and upload all of them.",
+      "            --add",
+      "            --rm",
+      "        entry          Set the entry file that xinetd really executes at first,",
+      "                       like 'boot.sh' in kernel pwn. In default case, when you use",
+      "                       'deploy' command, the files you specified are used as",
+      "                       'entries', and this deployment only includes those files.",
+      "        port           Set the port of the deployment, in default case, the port",
+      "                       number starts from 50000. You can use \"'filename'=...\"",
+      "                       to specify the port number."
+    ],
+  "list":
+    [
+      "    list               List some configs of selected objects.",
+      "        container      List the containers managed by pdt.",
+      "            -d         List information in detail.",
+      "        apt            List the apt packages should be installed of selected",
+      "                       objects. use -a to list those of all objects.",
+      "        deploy         List the file deployed in selected objects. -a to list all.",
+      "                       The output includes files included, entry file, original",
+      "                       files and ports",
+      "        select         List the selected container.",
+      "            -d         Similar to that of 'list container -d', detailed mode."
+    ],
+  "run":
+    [
+      "    run                Start building selected objects, -a for building all."
+    ],
+  "status":
+    [
+      "    status             Print out the status of a container, -a for all."
+    ]
+}
