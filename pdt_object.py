@@ -1,8 +1,6 @@
-import os
 import hashlib
-import subprocess
 import zipfile
-from colorama import Fore
+import subprocess
 from util import *
 
 
@@ -36,6 +34,7 @@ class PdtImage:
                 container.status = info['containers'][c]['status']
                 container.flag = info['containers'][c]['flag']
                 container.outer_port = info['containers'][c]['mapping port']
+                container.container_id = info['containers'][c]['container id']
                 self.containers[c] = container
         else:
             PrettyPrinter.error(f'initialization of container {self.name} failed.')
@@ -58,7 +57,8 @@ class PdtImage:
                 'flag': c.flag if c.flag != '' else '<not set>',
                 'mapping port': c.outer_port if c.outer_port != 0 else '<not set>',
                 'status': Fore.RED + c.status if c.status == 'exited'
-                else Fore.GREEN + c.status
+                else Fore.GREEN + c.status,
+                'container id': c.container_id if c.container_id != '' else '<NULL>'
             } for c in self.containers.values()}
         }
 
@@ -77,7 +77,8 @@ class PdtImage:
             'containers': {c.id: {
                 'flag': c.flag,
                 'mapping port': c.outer_port,
-                'status': c.status
+                'status': c.status,
+                'container id': c.container_id
             } for c in self.containers.values()}
         }
 
@@ -170,6 +171,47 @@ class PdtImage:
 
     def next_container_id(self):
         return len(self.containers) + 1
+
+    def delete_all_container(self):
+        for cid, ctn in self.containers.items():
+            os.system(f'docker stop {ctn.container_id}')
+            os.system(f'docker rm {ctn.container_id}')
+        self.containers.clear()
+
+    def __delete_a_container(self, cid: int):
+        # This method do not include rearrangement of ids
+        ctn = next((c for c in self.containers.values() if c.id == cid), None)
+        if ctn is None:
+            PrettyPrinter.error(f'container for id {cid} not found.')
+            return
+        os.system(f'docker stop {ctn.container_id}')
+        os.system(f'docker rm {ctn.container_id}')
+        del self.containers[cid]
+
+    def delete_containers(self, cid: dict[int, int]):
+        """
+        delete containers for selected ranges
+        :param cid: dict of ids, each KV-pair is a range needed to be deleted, like {1: 5} means id 1-5.
+        :return: None
+        """
+        for start, end in cid.items():
+            if start > end:
+                PrettyPrinter.error(f'format error, range start cannot be larger than range end: {start}-{end}')
+                continue
+            if start <= 0 or end <= 0:
+                PrettyPrinter.error(f'format error, range start and end can only be positive: {start}-{end}')
+                continue
+            for i in range(start, end + 1):
+                self.__delete_a_container(i)
+        self.__rearrange_id()
+
+    def __rearrange_id(self):
+        sorted_keys = sorted(self.containers.keys())
+        new_dict = {}
+        for index, key in enumerate(sorted_keys, start=1):
+            new_dict[index] = self.containers[key]
+            new_dict[index].id = index
+        self.containers = new_dict
 
 
 class PdtDeploy:

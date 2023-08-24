@@ -8,6 +8,7 @@ import pandas as pd
 
 PDT_CONSOLE = 'pdt> '
 PDT_ERROR = 'pdt: [x] '
+PDT_WARN = 'pdt: [!]'
 PDT_INFO = 'pdt: [o] '
 PDT_SCRIPT = '+ '
 FLAG_HEADER = 'flag'
@@ -18,6 +19,7 @@ ZIP_DIR = './runtime/deploy_files/zips'
 USER = 'ctf'
 BASEDIR_IN_DOCKER = '/home/' + USER
 
+
 class PrettyPrinter:
     @staticmethod
     def error(message, fore=Fore.RED, back=Back.RESET, style=Style.BRIGHT):
@@ -27,6 +29,11 @@ class PrettyPrinter:
     @staticmethod
     def info(message, fore=Fore.BLUE, back=Back.RESET, style=Style.BRIGHT):
         print(Fore.BLUE + PDT_INFO, end='')
+        print(fore + back + style + message + Style.RESET_ALL)
+
+    @staticmethod
+    def warning(message, fore=Fore.YELLOW, back=Back.RESET, style=Style.BRIGHT):
+        print(Fore.YELLOW + PDT_WARN, end='')
         print(fore + back + style + message + Style.RESET_ALL)
 
     @staticmethod

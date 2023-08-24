@@ -1,15 +1,10 @@
-import subprocess
 import sys
 import signal
 import os.path
 import argparse
-from typing import Callable
-
-import pandas
-import pandas as pd
 from help import *
 from pdt_object import *
-from util import *
+from typing import Callable
 
 
 class PdtFactory:
@@ -45,6 +40,10 @@ class PdtFactory:
             },
             'build': self.__build,
             'run': self.__run,
+            'rm': {
+                'image': self.__rm_image,
+                'container': self.__rm_container
+            }
         }
 
     '''****************************** some properties of Factory classes ******************************'''
@@ -267,13 +266,81 @@ class PdtFactory:
             if new_container.outer_port != 0:
                 run_command += f'-p {new_container.outer_port}:{self.__selected_image.port}'
             run_command += f' -d {self.__selected_image.name}'
-            print(run_command)
             new_container.flag = flag[i]
             docker_run_process = subprocess.run(run_command, stdout=subprocess.PIPE, shell=True)
             container_id = docker_run_process.stdout.strip()[:12].decode()
             new_container.container_id = container_id
             PrettyPrinter.info(f'Successfully created a container, id={next_id}, container_id={container_id}')
             self.__selected_image.containers[next_id] = new_container
+
+    def __rm_image(self, parsed_command: dict) -> None:
+        if len(parsed_command['commands']) < 3:
+            PrettyPrinter.error('no image specified.')
+            return
+        images = parsed_command['commands'][2:]
+        namelist = [i.name for i in self.__images]
+        for i in images:
+            if i not in namelist:
+                PrettyPrinter.error(f'Image {i} not found.')
+                continue
+            target = next((t for t in self.__images if t.name == i), None)
+            if not use_script:
+                if parsed_command['yes']:
+                    PrettyPrinter.info(f'There are {len(target.containers)} containers based on image {i}, deleted.')
+                elif parsed_command['no'] and len(target.containers.keys()) != 0:
+                    PrettyPrinter.info(f'There are {len(target.containers)} containers based on image {i}, skipped.')
+                    continue
+                elif len(target.containers.keys()) != 0:
+                    PrettyPrinter.warning(f'There are {len(target.containers)} containers based on image {i}, '
+                                          f'Deleting this image will delete all these containers! Continue? <N/y>')
+                    choice = input()
+                    if choice == 'Y' or choice == 'y':
+                        PrettyPrinter.info('Deleted.')
+                    else:
+                        PrettyPrinter.info('Skipped.')
+                        continue
+                else:
+                    PrettyPrinter.info(f'No container found based on this image, ready to delete.')
+            else:
+                if not parsed_command['yes'] and len(target.containers.keys()) != 0:
+                    PrettyPrinter.info(f'Skipped {i}')
+                    continue
+                PrettyPrinter.info(f'Ready to delete image {i}, which has {len(target.containers)} containers.')
+            # delete all the containers
+            if len(target.containers) != 0:
+                target.delete_all_container()
+            # delete this image
+            os.system(f'docker rmi {target.image_id}')
+            self.__images.remove(target)
+            del target
+
+    def __rm_container(self, parsed_command: dict) -> None:
+        if len(parsed_command['commands']) < 3:
+            PrettyPrinter.error('no container specified.')
+            return
+        targets: list[str] = parsed_command['commands'][2:]
+        for t in targets:
+            if t.count('.') != 1:
+                PrettyPrinter.error(f'Command format error: {t}')
+                return
+            image_name, cids = t.split('.')[0:2]
+            image = next((t for t in self.__images if t.name == image_name), None)
+            if image is None:
+                PrettyPrinter.error(f'specified image {image_name} not found.')
+                continue
+            cid: list[str] = cids.split(',')
+            # analysing delete list
+            rm_dict = {}
+            for cr in cid:
+                match = re.search(r'^(\d+)-(\d+)$', cr)
+                if not match:
+                    PrettyPrinter.error(f'Format error: {cr}, skipped')
+                    continue
+                start = int(match.group(1))
+                end = int(match.group(2))
+                rm_dict[start] = end
+            # start deleting containers
+            image.delete_containers(rm_dict)
 
     '''****************************** auxiliary methods for executing commands ******************************'''
 
@@ -326,11 +393,14 @@ class PdtFactory:
         parser.add_argument('-a', '--all', action='store_true')
         parser.add_argument('-f', '--flag', action='store')
         parser.add_argument('--op', action='store')
+        parser.add_argument('-y', '--yes', action='store_true')
+        parser.add_argument('--no', action='store_true')
         a = parser.parse_args(command).__dict__
         self.__exec_commands(a)
 
 
 factory = None
+use_script = False
 
 
 def crash_handler():
@@ -356,6 +426,7 @@ if __name__ == '__main__':
     check_dirs()
     factory = PdtFactory(load_config())
     if len(sys.argv) > 1 and sys.argv[1] == 'script':
+        use_script = True
         if len(sys.argv) < 3:
             PrettyPrinter.error('No scripts specified.')
             exit(0)
