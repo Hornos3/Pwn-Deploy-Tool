@@ -12,15 +12,17 @@ pip install pandas uuid colorama
 
 本工具目前使用命令行的方式进行管理，在未来的更新版本中可能会支持使用GUI进行管理。在本工具中，一个镜像（PdtImage对象）需要被选中之后才能进行配置，如有多个容器对象被选中，则设置时会对这些容器进行批量配置。
 
-## A. new命令
+你可以使用`python3 pdt.py script xxx.pscp`通过将多行命令写入脚本文件实现多行命令的批量执行。如果需要单独执行一条命令之后退出，可使用`python3 pdt.py command <commands>`完成。如果只执行`python3 pdt.py`，则会打开PDT命令行，你可以逐行输入命令并执行，还能够查看当前各个镜像与容器的状态信息。
+
+## A. new
 
 该命令可用于创建一个新的容器对象，这个容器对象没有进行任何配置，需要后续通过set命令进行配置。
 
-## B. select命令
+## B. select
 
 该命令可用于选中镜像对象。<font color=yellow>在一个时刻只能选中一个镜像并进行设置</font>。
 
-## C. set命令
+## C. set
 
 该命令可用于对选中的容器对象进行配置。
 
@@ -71,3 +73,30 @@ pip install pandas uuid colorama
 子命令：
 - `rm image <images>...`: 删除镜像，例：`rm image pwn pwn2`，注意：如果要删除的镜像还存在容器，则删除时会警告是否删除附带的容器，确认后会删除镜像与容器，否则不删除镜像。使用`-y/--yes`选项默认确认，使用`--no`选项默认拒绝，谨慎使用。对于使用脚本执行的多条命令，如果不指定`-y`选项，则默认不删除。
 - `rm container <images.<numbers>...> ...`: 删除容器，例：`rm container pwn.1-5,7,9 pwn2.10-100`——表示删除pwn镜像创建的第1-5、7、9这7个容器，删除pwn2镜像创建的91个容器。注意：在删除容器之后，未被删除的容器id会重新排布，并重新按顺序排列。如1-10这10个容器若删除了第1、3个，则原先第2个容器变成第1个，原先第4个容器变成第2个，以此类推。
+
+## H. stop
+
+该命令可用于停止运行容器。
+
+用法：`stop <images.<numbers>...> ...`，该命令后面的格式与`rm container`相同。
+
+# 3. 目录结构
+
+本工具的目录结构如下所示：
+
+```
+- pwn_deploy_tool               —— 主工作目录
+  - runtime                     —— 保存运行状态的目录
+    - deploy_files              —— 部署文件与镜像启动脚本等的保存目录
+      - zips                    —— 需要部署的文件的压缩包集合，压缩包名为sha256值
+      - <others>                —— 其他所有目录以镜像名命名，其中保存docker构建脚本、Dockerfile、xinetd文件、docker启动时执行的脚本文件
+      - config.yaml             —— 保存当前状态下所有镜像与容器的状态等信息
+  - templates                   —— 保存Dockerfile、docker构建脚本、xinetd文件与docker启动时执行的脚本文件的模板
+  - help.py                     —— 打印帮助文档的py脚本
+  - help_doc.json               —— 以json格式保存的帮助文档
+  - pdt.py                      —— 工具入口，保存全局管理类的逻辑
+  - pdt_object.py               —— 保存用于表示镜像、容器类的逻辑
+  - README.md                   —— 本文档
+  - util.py                     —— 保存用于输出等使用功能的逻辑
+```
+

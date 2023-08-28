@@ -184,34 +184,60 @@ class PdtImage:
         if ctn is None:
             PrettyPrinter.error(f'container for id {cid} not found.')
             return
-        os.system(f'docker stop {ctn.container_id}')
+        if self.containers[cid].status == 'running':
+            os.system(f'docker stop {ctn.container_id}')
         os.system(f'docker rm {ctn.container_id}')
         del self.containers[cid]
 
-    def delete_containers(self, cid: dict[int, int]):
+    def delete_containers(self, cid: list):
         """
         delete containers for selected ranges
-        :param cid: dict of ids, each KV-pair is a range needed to be deleted, like {1: 5} means id 1-5.
+        :param cid: list of ids, each element is a range needed to be deleted, like [1, 5] means id 1-5.
         :return: None
         """
-        for start, end in cid.items():
-            if start > end:
-                PrettyPrinter.error(f'format error, range start cannot be larger than range end: {start}-{end}')
-                continue
-            if start <= 0 or end <= 0:
-                PrettyPrinter.error(f'format error, range start and end can only be positive: {start}-{end}')
-                continue
+        for item in cid:
+            start = item[0]
+            end = item[1]
+            if not self.check_cid_range(start, end):
+                return
             for i in range(start, end + 1):
                 self.__delete_a_container(i)
         self.__rearrange_id()
 
-    def __rearrange_id(self):
+    def __stop_a_container(self, cid: int) -> None:
+        ctn = next((c for c in self.containers.values() if c.id == cid), None)
+        if ctn is None:
+            PrettyPrinter.error(f'container for id {cid} not found.')
+            return
+        os.system(f'docker stop {ctn.container_id}')
+        self.containers[cid].status = 'exited'
+        del self.containers[cid]
+
+    def stop_containers(self, cid: list) -> None:
+        for item in cid:
+            start = item[0]
+            end = item[1]
+            if not self.check_cid_range(start, end):
+                return
+            for i in range(start, end + 1):
+                self.__stop_a_container(i)
+
+    def __rearrange_id(self) -> None:
         sorted_keys = sorted(self.containers.keys())
         new_dict = {}
         for index, key in enumerate(sorted_keys, start=1):
             new_dict[index] = self.containers[key]
             new_dict[index].id = index
         self.containers = new_dict
+
+    def check_cid_range(self, start, end):
+        if start > end:
+            PrettyPrinter.error(f'format error, range start cannot be larger than range end: {start}-{end}')
+            return False
+        if start <= 0 or end <= 0:
+            PrettyPrinter.error(f'format error, range start and end can only be positive: {start}-{end}')
+            return False
+        return True
 
 
 class PdtDeploy:

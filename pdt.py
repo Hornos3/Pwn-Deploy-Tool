@@ -57,19 +57,19 @@ class PdtFactory:
         return self.__selected_image
 
     @property
-    def container_names(self) -> list[str]:
+    def image_names(self) -> list[str]:
         return [x.name for x in self.__images]
 
     @property
-    def container_apts(self) -> list[set[str]]:
+    def image_apts(self) -> list[set[str]]:
         return [x.apt for x in self.__images]
 
     @property
-    def container_deploys(self) -> list[set[str]]:
+    def image_deploys(self) -> list[set[str]]:
         return [x.deploy.files for x in self.__images]
 
     @property
-    def container_details(self) -> list[str]:
+    def image_details(self) -> list[str]:
         return [x.info_dict for x in self.__images]
 
     '''****************************** functions for all commands ******************************'''
@@ -319,28 +319,28 @@ class PdtFactory:
             PrettyPrinter.error('no container specified.')
             return
         targets: list[str] = parsed_command['commands'][2:]
-        for t in targets:
-            if t.count('.') != 1:
-                PrettyPrinter.error(f'Command format error: {t}')
-                return
-            image_name, cids = t.split('.')[0:2]
-            image = next((t for t in self.__images if t.name == image_name), None)
-            if image is None:
-                PrettyPrinter.error(f'specified image {image_name} not found.')
+        ic_range_list = parse_ic_range_list(targets)
+        for i, r in ic_range_list.items():
+            if i not in self.image_names:
+                PrettyPrinter.error(f'specified image {i} not found.')
                 continue
-            cid: list[str] = cids.split(',')
-            # analysing delete list
-            rm_dict = {}
-            for cr in cid:
-                match = re.search(r'^(\d+)-(\d+)$', cr)
-                if not match:
-                    PrettyPrinter.error(f'Format error: {cr}, skipped')
-                    continue
-                start = int(match.group(1))
-                end = int(match.group(2))
-                rm_dict[start] = end
+            image = next((x for x in self.__images if x.name == i))
             # start deleting containers
-            image.delete_containers(rm_dict)
+            image.delete_containers(r)
+
+    def __stop_container(self, parsed_command: dict) -> None:
+        if len(parsed_command['commands']) < 3:
+            PrettyPrinter.error('no container specified.')
+            return
+        targets: list[str] = parsed_command['commands'][2:]
+        ic_range_list = parse_ic_range_list(targets)
+        for i, r in ic_range_list.items():
+            if i not in self.image_names:
+                PrettyPrinter.error(f'specified image {i} not found.')
+                continue
+            image = next((x for x in self.__images if x.name == i))
+            # start deleting containers
+            image.stop_containers(r)
 
     '''****************************** auxiliary methods for executing commands ******************************'''
 
@@ -440,6 +440,10 @@ if __name__ == '__main__':
             PrettyPrinter.script(c)
             factory.arg_parser(re.split(r'\s+', c))
             save_config(factory.containers)
+        exit(0)
+    elif len(sys.argv) > 1 and sys.argv[1] == 'command':
+        factory.arg_parser(sys.argv[2:])
+        save_config(factory.containers)
         exit(0)
     while True:
         cmd = input('pdt> ')

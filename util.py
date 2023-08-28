@@ -104,10 +104,10 @@ class PrettyPrinter:
                 newline += ' '
             if len(str(e)) > bound:
                 ptr = bound - len(newline) - 1
-                newline += str(e)[:bound-len(newline)-1] + '↙'
+                newline += str(e)[:bound - len(newline) - 1] + '↙'
                 lines.append(newline)
                 while len(e) - ptr > bound:
-                    newline = str(e[ptr:ptr+bound-1]) + '↙'
+                    newline = str(e[ptr:ptr + bound - 1]) + '↙'
                     lines.append(newline)
                     ptr += bound - 1
                 else:
@@ -120,6 +120,7 @@ class PrettyPrinter:
                 newline = str(e)
         lines.append(newline)
         return '\n'.join(lines)
+
 
 def delayer_list(l: list) -> list:
     """
@@ -210,3 +211,26 @@ def relative_to_absolute_path(rel):
         return absolute_path
     else:
         return None
+
+
+def parse_ic_range_list(target: list[str]) -> dict[str, list] | None:
+    ret = {}
+    for t in target:
+        if t.count('.') != 1:
+            PrettyPrinter.error(f'Command format error: {t}')
+            return None
+        image_name, cids = t.split('.')[0:2]
+        cid: list[str] = cids.split(',')
+        # analysing list
+        rm_dict = []
+        for cr in cid:
+            match = re.search(r'^(\d+)-(\d+)$', cr)
+            if not match:
+                PrettyPrinter.error(f'Format error: {cr}, skipped')
+                continue
+            start = int(match.group(1))
+            end = int(match.group(2))
+            rm_dict.append([start, end])
+        ret[image_name] = rm_dict
+    return ret
+
