@@ -1,33 +1,30 @@
 import sys
 import signal
 import os.path
-import argparse
-from help import *
 from pdt_object import *
-from typing import Callable
 
 
 class PdtFactory:
     def __init__(self, images):
-        self.__docker_images: pd.DataFrame = pd.DataFrame()
-        self.__docker_containers: pd.DataFrame = pd.DataFrame()
+        self.__docker_client = docker.from_env()
+        self.__docker_images: list = []
+        self.__docker_containers: list = []
         self.__images: list[PdtImage] = []
         if images is not None:
             for i in images:
-                new_container = PdtImage(i['name'])
+                new_container = PdtImage(i['name'], self.__docker_client)
                 new_container.initialize(i)
                 self.__images.append(new_container)
-        self.__selected_image: PdtImage = PdtImage('none')
-        self.update_image_list()
+        self.__selected_image: PdtImage = PdtImage('none', self.__docker_client)
+        self.peek_docker_images()
         self.__command_tree = {
             'new': self.__new,
             'select': self.__select,
             'set': {
-                'image': self.__set_image,
+                'image': self.__set_parent,
                 'apt': self.__set_apt,
                 'basedir': self.__set_basedir,
                 'deploy': self.__set_deploy,
-                'undeploy': self.__set_undeploy,
                 'entry': self.__set_entry,
                 'port': self.__set_port
             },
@@ -45,6 +42,194 @@ class PdtFactory:
                 'container': self.__rm_container
             }
         }
+        self.__arg_parser = argparse.ArgumentParser()
+        self.__initialize_parsers()
+
+    def __initialize_parsers(self):
+        subparsers = self.__arg_parser.add_subparsers()
+
+        # new
+        parser_new = subparsers.add_parser(
+            'new',
+            help="Create docker object(s) not configured. You need to"
+                 "use 'select' command to select one of them.")
+        parser_new.add_argument('name', nargs='+', help='Image name to be created')
+        parser_new.set_defaults(func=self.__new)
+
+        # select
+        parser_select = subparsers.add_parser(
+            'select',
+            help="Select one object that is ready to be configured."
+                 "You can only select ONE object simultaneously.")
+        parser_select.add_argument('name', type=str, action='store', help='Image you want to select')
+        parser_select.set_defaults(func=self.__select)
+
+        # set
+        parser_set = subparsers.add_parser(
+            'set',
+            help="Set some config for the selected object.")
+        subparsers_set = parser_set.add_subparsers()
+        # set parent
+        parser_set_parent = subparsers_set.add_parser(
+            'parent',
+            help="set the image you problem based on. The image must exist"
+                 "in your host. Eg: set image ubuntu:20.04")
+        parser_set_parent.add_argument('tag', type=str, action='store', help='Image tag')
+        parser_set_parent.set_defaults(func=self.__set_parent)
+        # set apt
+        parser_set_apt = subparsers_set.add_parser(
+            'apt',
+            help='set the package name that your problem needs to install.'
+                 'There are some packages installed in default, like xinetd.'
+                 'Eg. set apt -a musl -r vim'
+        )
+        parser_set_apt.add_argument('-a', action='append', help='add packets')
+        parser_set_apt.add_argument('-r', action='append', help='remove packets')
+        parser_set_apt.set_defaults(func=self.__set_apt)
+        # set basedir
+        parser_set_basedir = subparsers_set.add_parser(
+            'basedir',
+            help='set the base directory of your problem. The basedir '
+                 'must be a local path. In PDT, when you need to build a problem, '
+                 'the PDT will zip your files into a .zip file, and the basedir '
+                 'will influence the zip process. Eg. if you set basedir to /foo, '
+                 'then when you need to zip /foo/1/1.txt and /foo/2.txt, then you '
+                 'can get a zip file. If you unzip it, you can get 1/1.txt and 2.txt '
+                 'in the directory where you place the zip file.'
+        )
+        parser_set_basedir.add_argument('base', type=str, action='store', help='base directory')
+        parser_set_basedir.set_defaults(func=self.__set_basedir)
+        # set deploy
+        parser_set_deploy = subparsers_set.add_parser(
+            'deploy',
+            help='set the file you want to deploy in your problem. '
+                 'Eg. set deploy -a cpp pwn.elf -r .gdb_history'
+        )
+        parser_set_deploy.add_argument('-a', action='append', help='add files/directories')
+        parser_set_deploy.add_argument('-r', action='append', help='remove files/directories')
+        parser_set_deploy.set_defaults(func=self.__set_deploy)
+        # set entry
+        parser_set_entry = subparsers_set.add_parser(
+            'entry',
+            help='set the entry file of your problem, this file must be '
+                 'an executable file for Linux, like a shell file or an ELF file.'
+        )
+        parser_set_entry.add_argument('entry', type=str, action='store', help='entry file')
+        parser_set_entry.set_defaults(func=self.__set_entry)
+        # set port
+        parser_set_port = subparsers_set.add_parser(
+            'port',
+            help='set the outer port of your problem '
+        )
+        parser_set_port.add_argument('port', type=int, choices=range(0, 65536), help='port specified')
+        parser_set_port.set_defaults(func=self.__set_port)
+
+        # list
+        parser_list = subparsers.add_parser(
+            'list',
+            help='List some configs of selected objects.'
+        )
+        subparsers_list = parser_list.add_subparsers()
+        # list image
+        parser_list_image = subparsers_list.add_parser(
+            'image',
+            help='Show the images managed by pdt.'
+        )
+        parser_list_image.add_argument('image', nargs='*', type=str, action='store', help='Image specified')
+        parser_list_image.add_argument('-d', action='store_true', help='Show detailed information')
+        parser_list_image.add_argument('-a', action='store_true', help='Show all images')
+        parser_list_image.set_defaults(func=self.__list_image)
+        # list apt
+        parser_list_apt = subparsers_list.add_parser(
+            'apt',
+            help='Show the apt packages should be installed.'
+        )
+        parser_list_apt.add_argument('-a', action='store_true', help='Show all the images')
+        parser_list_apt.set_defaults(func=self.__list_apt)
+        # list deploy
+        parser_list_deploy = subparsers_list.add_parser(
+            'deploy',
+            help='Show the file deployed in selected objects.'
+        )
+        parser_list_deploy.add_argument('-a', action='store_true', help='Show all the images')
+        parser_list_deploy.set_defaults(func=self.__list_deploy)
+        # list select
+        parser_list_select = subparsers_list.add_parser(
+            'select',
+            help='Show the selected image.'
+        )
+        parser_list_select.add_argument('-d', action='store_true', help='Show detailed information')
+        parser_list_select.set_defaults(func=self.__list_select)
+
+        # build
+        parser_build = subparsers.add_parser(
+            'build',
+            help='Start building selected image. You will get an image for '
+                 'your problem, you need to use \'run\' to create __containers.'
+        )
+        parser_build.set_defaults(func=self.__build)
+
+        # run
+        parser_run = subparsers.add_parser(
+            'run',
+            help='Create/Start __containers for your problem.'
+        )
+        parser_run.add_argument('ids', type=lambda v: validate_ids(v), nargs='*', action='append')
+        parser_run.add_argument('-n', type=int, action='store', help='Create new container(s)')
+        parser_run.add_argument('-p', type=int, choices=range(0, 65536), action='store',
+                                help='Set outer port(s), if not specified, PDT will select free ports randomly')
+        parser_run.add_argument('-f', action='store',
+                                help='Set the flag, if not specified, the flag will be randomly generated')
+        parser_run.add_argument('-a', action='store_true', help='Start all __containers')
+        parser_run.set_defaults(func=self.__run)
+
+        # rm
+        parser_rm = subparsers.add_parser(
+            'rm',
+            help='Remove something.'
+        )
+        subparsers_rm = parser_rm.add_subparsers()
+        # rm image
+        parser_rm_image = subparsers_rm.add_parser(
+            'image',
+            help='Remove some image(s). '
+                 'If both -y and -n are not specified, PDT will ask you whether images with '
+                 'existing containers should be deleted.'
+        )
+        parser_rm_image.add_argument('images', nargs='+', help='images needed to be deleted')
+        parser_rm_image.add_argument('-y', action='store_true',
+                                     help='If there are existing containers of images to be removed, '
+                                          'PDT will delete these containers first, and delete the image.')
+        parser_rm_image.add_argument('-n', action='store_true',
+                                     help='If there are existing containers of images to be removed, '
+                                          'PDT will not delete these containers and images.')
+        parser_rm_image.set_defaults(func=self.__rm_image)
+        # rm container
+        parser_rm_container = subparsers_rm.add_parser(
+            'container',
+            help='Remove some container(s). '
+                 'Argument format: '
+                 '"rm container foo.1,4-5,6-12 goo.2-10" --- '
+                 'It means deleting the container 1, 4~5, 6~12 of image foo, and container '
+                 '2~10 of image goo.'
+        )
+        parser_rm_container.add_argument('containers', nargs='+', help='containers needed to be deleted')
+        parser_rm_container.set_defaults(func=self.__rm_container)
+
+        # stop
+        parser_stop = subparsers.add_parser(
+            'stop',
+            help='Stop something(containers supported only until now).'
+        )
+        subparsers_stop = parser_stop.add_subparsers()
+        # stop container
+        parser_stop_container = subparsers_stop.add_parser(
+            'container',
+            help='stop containers.'
+        )
+        parser_stop_container.add_argument(
+            'containers', nargs='+', help='The argument format is the same as \'rm container\'')
+        parser_stop_container.set_defaults(func=self.__stop_container)
 
     '''****************************** some properties of Factory classes ******************************'''
 
@@ -72,111 +257,82 @@ class PdtFactory:
     def image_details(self) -> list[str]:
         return [x.info_dict for x in self.__images]
 
+    @property
+    def command_tree(self) -> dict:
+        return self.__get_command_tree(self.__command_tree)
+
+    def __get_command_tree(self, root) -> dict:
+        ret = {}
+        for k in root:
+            if type(root[k]) == dict:
+                ret[k] = self.__get_command_tree(root[k])
+            else:
+                ret[k] = None
+        return ret
+
     '''****************************** functions for all commands ******************************'''
 
-    def __exec_commands(self, parsed_commands, layer: dict[str, dict] | dict[str, Callable] = None, depth=0) -> None:
-        """
-        This function is used to interact with command lists, it's recursive.
-        :param parsed_commands: unresolved commands
-        :param layer: current layer of command tree, always a dict.
-                      if a command has subcommands, its value should be a dict,
-                      or else, its value should be a function for executing this command.
-        :param depth: the depth of current command tree node, which means that how many
-                      commands were searched.
-        :return: None
-        """
-        if layer is None:
-            layer = self.__command_tree
-        if len(parsed_commands['commands']) <= depth:
-            if len(parsed_commands['commands']) == 0:
-                return
-            else:
-                PrettyPrinter.error(f'Subcommand needed after command {parsed_commands["commands"][depth - 1]}.')
-                return
-        if parsed_commands['commands'][depth] not in layer:
-            PrettyPrinter.error(f'command not found: {parsed_commands["commands"][depth]}')
-            return
-        if isinstance(layer[parsed_commands['commands'][depth]], Callable):
-            layer[parsed_commands['commands'][depth]](parsed_commands)
-        else:
-            self.__exec_commands(parsed_commands, layer[parsed_commands["commands"][depth]], depth + 1)
-
-    def __new(self, parsed_command: dict) -> None:
-        new_images = parsed_command['commands'][1:]
+    def __new(self, pc: dict) -> None:
+        new_images = pc['name']
         for i in translate_containers(new_images):
-            if i in [image.name for image in self.__images]:
+            if f"{i}:latest" in self.docker_images_namelist():
                 PrettyPrinter.error(f'\'{i}\' exists.')
                 continue
             else:
-                self.add_container(i)
+                self.add_image(i)
                 PrettyPrinter.info(f'\'{i}\' created.')
 
-    def __select(self, parsed_command: dict) -> None:
-        if len(parsed_command['commands']) < 2:
-            PrettyPrinter.error('No image selected.')
-            return
-        if parsed_command['commands'][1] not in [i.name for i in self.__images]:
+    def __select(self, pc: dict) -> None:
+        if pc['name'] not in [i.name for i in self.__images]:
             PrettyPrinter.error('image specified do not exist.')
             return
-        self.__selected_image = [i for i in self.__images if i.name == parsed_command['commands'][1]][0]
+        self.__selected_image = next((i for i in self.__images if i.name == pc['name']), None)
 
-    def __set_image(self, parsed_command: dict) -> None:
+    def __set_parent(self, pc: dict) -> None:
         image_names = self.docker_images_namelist()
-        if len(parsed_command['commands']) < 3:
-            PrettyPrinter.error(f'no image selected.')
+        if pc['tag'] not in image_names:
+            PrettyPrinter.error(f'image {pc["tag"]} not found in local machine.')
             return
-        if parsed_command['commands'][2] not in image_names:
-            PrettyPrinter.error(f'image {parsed_command["commands"][2]} not found in local machine.')
-            return
-        self.__selected_image.image = parsed_command['commands'][2]
+        self.__selected_image.parent = pc['tag']
 
-    def __set_apt(self, parsed_command: dict) -> None:
-        if not self.check_set(parsed_command):
-            return
-        if set(parsed_command['add']) is not None:
-            self.__selected_image.apt |= set(parsed_command['add'])
-        if set(parsed_command['rm']) is not None:
-            self.__selected_image.apt -= set(parsed_command['rm'])
+    def __set_apt(self, pc: dict) -> None:
+        if pc['a'] is not None:
+            self.__selected_image.apt |= set(pc['a'])
+        if pc['r'] is not None:
+            self.__selected_image.apt -= set(pc['r'])
 
-    def __set_basedir(self, parsed_command: dict) -> None:
-        if not self.check_set(parsed_command):
-            return
-        self.__selected_image.deploy.basedir = parsed_command['commands'][2]
+    def __set_basedir(self, pc: dict) -> None:
+        self.__selected_image.deploy.basedir = pc['base']
 
-    def __set_deploy(self, parsed_command: dict) -> None:
+    def __set_deploy(self, pc: dict) -> None:
         # ATTENTION: all files cannot have any spaces in its path!!!
-        if not self.check_set(parsed_command):
-            return
-        self.__selected_image.deploy.files |= set(parsed_command['commands'][2:])
+        if pc['a'] is not None:
+            self.__selected_image.deploy.files |= set(pc['a'])
+        if pc['r'] is not None:
+            self.__selected_image.deploy.files -= set(pc['r'])
 
-    def __set_undeploy(self, parsed_command: dict) -> None:
-        if not self.check_set(parsed_command):
-            return
-        self.__selected_image.deploy.files -= set(parsed_command['commands'][2:])
+    def __set_entry(self, pc: dict) -> None:
+        self.__selected_image.deploy.entry = pc['entry']
 
-    def __set_entry(self, parsed_command: dict) -> None:
-        if not self.check_set(parsed_command):
-            return
-        self.__selected_image.deploy.entry = parsed_command['commands'][2]
+    def __set_port(self, pc: dict) -> None:
+        self.__selected_image.port = pc['port']
 
-    def __set_port(self, parsed_command: dict) -> None:
-        if not self.check_set(parsed_command):
-            return
-        try:
-            port = int(parsed_command['commands'][2])
-        except ValueError:
-            PrettyPrinter.error('Port input is not a valid integer.')
-            return
-        self.__selected_image.port = port
+    def __list_image(self, pc: dict) -> None:
+        if pc['a']:
+            for image in self.__images:
+                if pc['d']:
+                    print(PrettyPrinter.print_dict_as_a_tree(image.info_dict))
+                else:
+                    print(image.name)
+        else:
+            for image in pc['image']:
+                if pc['d']:
+                    print(PrettyPrinter.print_dict_as_a_tree(image.info_dict))
+                else:
+                    print(image.__name)
 
-    def __list_image(self, parsed_command: dict) -> None:
-        for image in self.__images:
-            if parsed_command['detail']:
-                print(PrettyPrinter.print_dict_as_a_tree(image.info_dict))
-            else:
-                print(image.name)
+    def __list_apt(self, _: dict) -> None:
 
-    def __list_apt(self, parsed_command: dict) -> None:
         max_name_len = max([len(i.name) for i in self.__images])
         bound = 78 - max_name_len
         data = []
@@ -185,7 +341,7 @@ class PdtFactory:
         chart: pd.DataFrame = pd.DataFrame(data, columns=['name', 'apt list'])
         print(chart)
 
-    def __list_deploy(self, parsed_command: dict) -> None:
+    def __list_deploy(self, _: dict) -> None:
         max_name_len = max([len(i.name) for i in self.__images])
         bound = 78 - max_name_len
         data = []
@@ -194,90 +350,57 @@ class PdtFactory:
         chart: pd.DataFrame = pd.DataFrame(data, columns=['name', 'deploy'])
         print(chart)
 
-    def __list_select(self, parsed_command: dict):
-        if parsed_command['detail']:
+    def __list_select(self, pc: dict):
+        if pc['d']:
             print(PrettyPrinter.print_dict_as_a_tree(self.__selected_image.info_dict))
         else:
             print(self.__selected_image.name)
 
-    def __list_status(self, parsed_command: dict) -> None:
+    def __list_status(self, _: dict) -> None:
         data = {}
         for image in self.__images:
-            if image.status == 'unallocated':
+            if image.image_object is None:
                 data[image.name] = {'status': Style.BRIGHT + Fore.RED + '⬤  ', 'containers': {}}
             else:
                 data[image.name] = {'status': Style.BRIGHT + Fore.GREEN + '⬤  ', 'containers': {}}
-            data[image.name]['status'] += image.status + Style.RESET_ALL
+            data[image.name]['status'] += ('Not Built' if image.image_object is None else "Built") + Style.RESET_ALL
             for cid, container in image.containers:
                 data[image.name]['containers'][cid] = (Fore.RED if container.status == 'exited' else Fore.GREEN) \
                                                       + '⬤  ' + Fore.RESET + container.status
         print(PrettyPrinter.print_dict_as_a_tree(data))
 
-    def __build(self, parsed_command: dict) -> None:
+    def __build(self, _: dict) -> None:
         self.__selected_image.build()
-        self.update_image_list()
+        self.peek_docker_images()
 
-    def __run(self, parsed_command: dict) -> None:
-        if len(parsed_command['commands']) > 1:
-            try:
-                run_ids = [int(i) for i in parsed_command['commands'][1:]]
-            except ValueError:
-                PrettyPrinter.error('Specified id is not a number.')
-                return
-        else:
-            run_ids = []
-        if parsed_command['new'] is not None:
-            try:
-                create_num = int(parsed_command['new'])
-            except ValueError:
-                PrettyPrinter.error('Specified new containers\' count is not a number')
-                return
-        else:
-            create_num = 0
-        if parsed_command['op'] is not None:
-            try:
-                start_port = int(parsed_command['op'])
-            except ValueError:
-                PrettyPrinter.error('Specified port is not a number')
-                return
-        else:
-            start_port = 0
-        run_count = len(run_ids) + create_num
-        if parsed_command['flag'] is not None:
-            flag = parsed_command['flag'] * run_count
-        else:
-            flag = flag_generator(run_count)
+    def __run(self, pc: dict) -> None:
+        pc['ids'] = delayer_list(pc['ids'])
+        create_num = pc['n'] if pc['n'] is not None else 0
 
-        # start running existing containers
-        for ctn_id in run_ids:
-            if ctn_id not in self.__selected_image.containers.keys():
-                PrettyPrinter.error(f'no container found for id {ctn_id}.')
-                continue
-            os.system(f'docker start {self.__selected_image.containers[ctn_id].container_id}')
+        # start running existing __containers
+        for ctn_id in pc['ids']:
+            if type(ctn_id) == type(tuple):
+                for i in range(ctn_id[0], ctn_id[1] + 1):
+                    if i >= self.__selected_image.container_cnt:
+                        PrettyPrinter.error(f'Container id out of bound: {i} (should be smaller than '
+                                            f'{self.__selected_image.container_cnt}).')
+                        continue
+                    if self.__selected_image.container_stat(i) != 'running':
+                        self.__selected_image.start_container(i)
+            else:
+                if not 1 <= ctn_id <= self.__selected_image.container_cnt:
+                    PrettyPrinter.error(f'Container id out of bound: '
+                                        f'{ctn_id} for {self.__selected_image.container_cnt}.')
+                    continue
+                if self.__selected_image.container_stat(ctn_id) != 'running':
+                    self.__selected_image.start_container(ctn_id)
 
-        # start creating new containers
+        # start creating new __containers
         for i in range(create_num):
-            next_id = self.__selected_image.next_container_id()
-            run_command = f'docker run '
-            new_container = PdtContainer(self.__selected_image)
-            new_container.id = next_id
-            new_container.status = 'running'
-            new_container.outer_port = start_port + i if start_port != 0 else 0
-            if new_container.outer_port != 0:
-                run_command += f'-p {new_container.outer_port}:{self.__selected_image.port}'
-            run_command += f' -d {self.__selected_image.name}'
-            new_container.flag = flag[i]
-            docker_run_process = subprocess.run(run_command, stdout=subprocess.PIPE, shell=True)
-            container_id = docker_run_process.stdout.strip()[:12].decode()
-            new_container.container_id = container_id
-            PrettyPrinter.info(f'Successfully created a container, id={next_id}, container_id={container_id}')
-            self.__selected_image.containers[next_id] = new_container
+            self.__selected_image.add_container(outer_port=pc['p'], flag=pc['f'])
 
-    def __rm_image(self, parsed_command: dict) -> None:
-        if len(parsed_command['commands']) < 3:
-            PrettyPrinter.error('no image specified.')
-            return
-        images = parsed_command['commands'][2:]
+    def __rm_image(self, pc: dict) -> None:
+        images = pc['images']
         namelist = [i.name for i in self.__images]
         for i in images:
             if i not in namelist:
@@ -285,13 +408,13 @@ class PdtFactory:
                 continue
             target = next((t for t in self.__images if t.name == i), None)
             if not use_script:
-                if parsed_command['yes']:
-                    PrettyPrinter.info(f'There are {len(target.containers)} containers based on image {i}, deleted.')
-                elif parsed_command['no'] and len(target.containers.keys()) != 0:
-                    PrettyPrinter.info(f'There are {len(target.containers)} containers based on image {i}, skipped.')
+                if pc['y']:
+                    PrettyPrinter.info(f'There are {target.container_cnt} containers based on image {i}, deleted.')
+                elif pc['n'] and target.container_cnt != 0:
+                    PrettyPrinter.info(f'There are {target.container_cnt} containers based on image {i}, skipped.')
                     continue
-                elif len(target.containers.keys()) != 0:
-                    PrettyPrinter.warning(f'There are {len(target.containers)} containers based on image {i}, '
+                elif target.container_cnt != 0:
+                    PrettyPrinter.warning(f'There are {target.container_cnt} containers based on image {i}, '
                                           f'Deleting this image will delete all these containers! Continue? <N/y>')
                     choice = input()
                     if choice == 'Y' or choice == 'y':
@@ -302,60 +425,40 @@ class PdtFactory:
                 else:
                     PrettyPrinter.info(f'No container found based on this image, ready to delete.')
             else:
-                if not parsed_command['yes'] and len(target.containers.keys()) != 0:
+                if not pc['y'] and target.container_cnt != 0:
                     PrettyPrinter.info(f'Skipped {i}')
                     continue
-                PrettyPrinter.info(f'Ready to delete image {i}, which has {len(target.containers)} containers.')
+                PrettyPrinter.info(f'Ready to delete image {i}, which has {target.container_cnt} containers.')
             # delete all the containers
-            if len(target.containers) != 0:
-                target.delete_all_container()
+            if target.container_cnt != 0:
+                target.delete_all_containers()
+            target.delete_image()
             # delete this image
-            os.system(f'docker rmi {target.image_id}')
             self.__images.remove(target)
             del target
 
-    def __rm_container(self, parsed_command: dict) -> None:
-        if len(parsed_command['commands']) < 3:
-            PrettyPrinter.error('no container specified.')
-            return
-        targets: list[str] = parsed_command['commands'][2:]
+    def __rm_container(self, pc: dict) -> None:
+        targets: list[str] = pc['containers']
         ic_range_list = parse_ic_range_list(targets)
         for i, r in ic_range_list.items():
             if i not in self.image_names:
                 PrettyPrinter.error(f'specified image {i} not found.')
                 continue
-            image = next((x for x in self.__images if x.name == i))
+            image = next((x for x in self.__images if x.name == i), None)
             # start deleting containers
             image.delete_containers(r)
 
-    def __stop_container(self, parsed_command: dict) -> None:
-        if len(parsed_command['commands']) < 3:
-            PrettyPrinter.error('no container specified.')
-            return
-        targets: list[str] = parsed_command['commands'][2:]
+    def __stop_container(self, pc: dict) -> None:
+        targets: list[str] = pc['containers']
         ic_range_list = parse_ic_range_list(targets)
         for i, r in ic_range_list.items():
             if i not in self.image_names:
                 PrettyPrinter.error(f'specified image {i} not found.')
                 continue
-            image = next((x for x in self.__images if x.name == i))
-            # start deleting containers
+            image = next((x for x in self.__images if x.name == i), None)
             image.stop_containers(r)
 
     '''****************************** auxiliary methods for executing commands ******************************'''
-
-    def update_image_list(self):
-        self.__docker_images: pd.DataFrame = \
-            analyse_console_table(
-                subprocess.Popen('docker images', shell=True, stdout=subprocess.PIPE).stdout.read().decode())
-
-    def update_container_list(self):
-        self.__docker_containers: pd.DataFrame = \
-            analyse_console_table(
-                subprocess.Popen('docker ps ' +
-                                 ' '.join(['-f ancestor=' + image.name for image in self.__images]) + ' -a',
-                                 shell=True, stdout=subprocess.PIPE).stdout.read().decode()
-            )
 
     def check_set(self, parsed_command: dict):
         """
@@ -372,31 +475,25 @@ class PdtFactory:
             return False
         return True
 
-    def add_container(self, newone) -> None:
-        self.__images.append(PdtImage(newone))
+    def add_image(self, newone) -> None:
+        self.__images.append(PdtImage(newone, self.__docker_client))
 
     def peek_docker_images(self) -> None:
-        console_out = subprocess.Popen('docker images', shell=True, stdout=subprocess.PIPE).stdout.read().decode()
-        self.__docker_images = analyse_console_table(console_out)
+        self.__docker_images = self.__docker_client.images.list()
+
+    def peek_docker_containers(self) -> None:
+        self.__docker_containers = self.__docker_client.__containers.list()
 
     def docker_images_namelist(self) -> list[str]:
         self.peek_docker_images()
-        name = self.__docker_images['REPOSITORY']
-        version = self.__docker_images['TAG']
-        return [f'{n}:{v}' for n, v in zip(name, version)]
+        return delayer_list([n.tags for n in self.__docker_images])
 
     def arg_parser(self, command):
-        parser = argparse.ArgumentParser(usage=Help.get_help_str())
-        parser.add_argument('commands', nargs='*')
-        parser.add_argument('-d', '--detail', action='store_true')
-        parser.add_argument('-n', '--new', action='store')
-        parser.add_argument('-a', '--all', action='store_true')
-        parser.add_argument('-f', '--flag', action='store')
-        parser.add_argument('--op', action='store')
-        parser.add_argument('-y', '--yes', action='store_true')
-        parser.add_argument('--no', action='store_true')
-        a = parser.parse_args(command).__dict__
-        self.__exec_commands(a)
+        # try:
+        parsed = self.__arg_parser.parse_args(command)
+        parsed.func(parsed.__dict__)
+        # except (SystemExit, Exception):
+        #     print("Error")
 
 
 factory = None
@@ -437,6 +534,9 @@ if __name__ == '__main__':
             script_content = f.read()
         script_commands = script_content.split('\n')
         for c in script_commands:
+            c = c.strip()
+            if len(c) == 0 or c.startswith('#'):    # empty lines and comment lines
+                continue
             PrettyPrinter.script(c)
             factory.arg_parser(re.split(r'\s+', c))
             save_config(factory.containers)
@@ -453,12 +553,5 @@ if __name__ == '__main__':
         if args[0] == 'exit':
             print('Bye')
             exit(0)
-        main_cmd = args[0]
-        if main_cmd == 'help':
-            Help.help()
-            continue
-        if 'help' in args:
-            Help.help(main_cmd)
-            continue
         factory.arg_parser(args)
         save_config(factory.containers)

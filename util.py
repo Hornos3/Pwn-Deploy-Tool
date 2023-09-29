@@ -1,7 +1,9 @@
+import argparse
 import os
 import re
 import yaml
 import uuid
+import socket
 from typing import Union
 from colorama import Fore, Back, Style
 import pandas as pd
@@ -140,7 +142,7 @@ def delayer_list(l: list) -> list:
 def translate_containers(l: list):
     """
     Used for translating given list into container list.
-    In PDT, we allow user to input '*' to define multiple containers, this function will translate
+    In PDT, we allow user to input '*' to define multiple __containers, this function will translate
     it into individuals, like 'pwn*2' will be translated into 'pwn_0' and 'pwn_1'
     :param l: input list, it can come from user command 'select' and 'new'
     :return: valid container list
@@ -167,6 +169,25 @@ def translate_containers(l: list):
                 newone = container_name + '_' + str(c)
                 result.append(newone)
     return result
+
+
+def get_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as temp_socket:
+        temp_socket.bind(('0.0.0.0', 0))
+        _, port = temp_socket.getsockname()
+        return port
+
+
+def check_sock_free(port: int):
+    if port < 10000 or port > 65535:
+        PrettyPrinter.error("Illegal sock specified.")
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as temp_socket:
+            temp_socket.bind(('0.0.0.0', port))
+            _, port = temp_socket.getsockname()
+            return True
+    except socket.error:
+        return False
 
 
 def analyse_console_table(output: str) -> pd.DataFrame:
@@ -224,13 +245,25 @@ def parse_ic_range_list(target: list[str]) -> dict[str, list] | None:
         # analysing list
         rm_dict = []
         for cr in cid:
-            match = re.search(r'^(\d+)-(\d+)$', cr)
-            if not match:
+            if match := re.search(r'^(\d+)-(\d+)$', cr):
+                start = int(match.group(1))
+                end = int(match.group(2))
+                rm_dict.append([start, end])
+            elif match := re.match(r'^(\d+)$', cr):
+                start = end = int(match.group(1))
+                rm_dict.append([start, end])
+            else:
                 PrettyPrinter.error(f'Format error: {cr}, skipped')
                 continue
-            start = int(match.group(1))
-            end = int(match.group(2))
-            rm_dict.append([start, end])
         ret[image_name] = rm_dict
     return ret
 
+
+def validate_ids(value):
+    if match := re.match(r'^([0-9]+)$', value):
+        return match.group(1)
+    if match := re.match(r'^([0-9]+)-([0-9]+)$', value):
+        if match.group(2) <= match.group(1):
+            raise argparse.ArgumentTypeError(f"Invalid value: {value}. range end must be larger than range start.")
+        return match.group(1), match.group(2)
+    raise argparse.ArgumentTypeError(f'Invalid value: {value}. It must be a number or a range.')
